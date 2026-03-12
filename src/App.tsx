@@ -1,4 +1,9 @@
 import { useState, useEffect, useRef, useCallback } from "react";
+import { createClient } from "@supabase/supabase-js";
+
+const SUPABASE_URL = import.meta.env.VITE_SUPABASE_URL || '';
+const SUPABASE_ANON_KEY = import.meta.env.VITE_SUPABASE_ANON_KEY || '';
+const supabase = createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
 
 const FREE_LIMIT = 3;
 const FILLER_WORDS = ['um','uh','like','you know','literally','basically','right','so','actually','kind of','sort of','i mean','you see','well','okay so','and then','but then'];
@@ -88,7 +93,6 @@ const css = `
   textarea:focus, input:focus { border-color:#6366f1 !important; }
 `;
 
-
 const Footer = ({ onPrivacy }: { onPrivacy: () => void }) => (
   <footer style={{ textAlign:'center', padding:'24px 20px', borderTop:`1px solid #1e2235`, marginTop:40 }}>
     <p style={{ fontSize:12, color:'#6b7280' }}>
@@ -105,14 +109,19 @@ const Footer = ({ onPrivacy }: { onPrivacy: () => void }) => (
   </footer>
 );
 
-
 export default function App() {
   const [screen, setScreen] = useState('home');
   const [user, setUser] = useState<any>(null);
+  const [profile, setProfile] = useState<any>(null);
   const [analysesUsed, setAnalysesUsed] = useState(0);
   const [showAuth, setShowAuth] = useState(false);
   const [showUpgrade, setShowUpgrade] = useState(false);
+  const [authTab, setAuthTab] = useState<'signin'|'signup'>('signup');
+  const [authName, setAuthName] = useState('');
   const [authEmail, setAuthEmail] = useState('');
+  const [authPassword, setAuthPassword] = useState('');
+  const [authError, setAuthError] = useState('');
+  const [authLoading, setAuthLoading] = useState(false);
   const [mode, setMode] = useState('record');
 
   const [recording, setRecording] = useState(false);
@@ -134,14 +143,83 @@ export default function App() {
   const lastSoundRef = useRef(Date.now());
   const pausesRef = useRef<any[]>([]);
 
+  // On mount: check existing session
   useEffect(() => {
-    const u = localStorage.getItem('sc_user');
-    const n = localStorage.getItem('sc_uses');
-    if (u) setUser(JSON.parse(u));
-    if (n) setAnalysesUsed(parseInt(n) || 0);
+    supabase.auth.getSession().then(({ data: { session } }) => {
+      if (session?.user) {
+        setUser(session.user);
+        fetchProfile(session.user.id);
+      }
+    });
+    const { data: { subscription } } = supabase.auth.onAuthStateChange((_event, session) => {
+      if (session?.user) {
+        setUser(session.user);
+        fetchProfile(session.user.id);
+      } else {
+        setUser(null);
+        setProfile(null);
+        setAnalysesUsed(0);
+      }
+    });
+    return () => subscription.unsubscribe();
   }, []);
 
-  // Pre-warm camera preview when entering record screen
+  const fetchProfile = async (userId: string) => {
+    const { data } = await supabase
+      .from('profiles')
+      .select('*')
+      .eq('user_id', userId)
+      .single();
+    if (data) {
+      setProfile(data);
+      setAnalysesUsed(data.analyses_used || 0);
+    }
+  };
+
+  const createProfile = async (userId: string, name: string, email: string) => {
+    const { data } = await supabase.from('profiles').insert({
+      user_id: userId,
+      name,
+      analyses_used: 0,
+      is_paid: false,
+      plan: 'free',
+      source: 'web',
+    }).select().single();
+    if (data) {
+      setProfile(data);
+      setAnalysesUsed(0);
+    }
+  };
+
+  const handleSignUp = async () => {
+    if (!authName.trim()) { setAuthError('Please enter your name.'); return; }
+    if (!authEmail.includes('@')) { setAuthError('Please enter a valid email.'); return; }
+    if (authPassword.length < 6) { setAuthError('Password must be at least 6 characters.'); return; }
+    setAuthLoading(true); setAuthError('');
+    const { data, error } = await supabase.auth.signUp({ email: authEmail, password: authPassword });
+    if (error) { setAuthError(error.message); setAuthLoading(false); return; }
+    if (data.user) {
+      await createProfile(data.user.id, authName, authEmail);
+      setShowAuth(false);
+    }
+    setAuthLoading(false);
+  };
+
+  const handleSignIn = async () => {
+    if (!authEmail.includes('@')) { setAuthError('Please enter a valid email.'); return; }
+    if (!authPassword) { setAuthError('Please enter your password.'); return; }
+    setAuthLoading(true); setAuthError('');
+    const { error } = await supabase.auth.signInWithPassword({ email: authEmail, password: authPassword });
+    if (error) { setAuthError(error.message); setAuthLoading(false); return; }
+    setShowAuth(false);
+    setAuthLoading(false);
+  };
+
+  const handleSignOut = async () => {
+    await supabase.auth.signOut();
+  };
+
+  // Pre-warm camera
   useEffect(() => {
     if (screen !== 'record' || mode !== 'record') return;
     let active = true;
@@ -162,7 +240,7 @@ export default function App() {
     return () => { active = false; };
   }, [screen, mode]);
 
-  // Re-attach stream to video after every re-render (fixes black screen on record)
+  // Re-attach stream after re-render
   useEffect(() => {
     if (streamRef.current && videoRef.current) {
       if (videoRef.current.srcObject !== streamRef.current) {
@@ -173,24 +251,11 @@ export default function App() {
     }
   });
 
-  const canAnalyze = user?.isPaid || analysesUsed < FREE_LIMIT;
+  const canAnalyze = profile?.is_paid || analysesUsed < FREE_LIMIT;
   const remaining = Math.max(0, FREE_LIMIT - analysesUsed);
 
-  const saveUser = (u: any) => { setUser(u); localStorage.setItem('sc_user', JSON.stringify(u)); };
-
-  const handleAuth = () => {
-    if (!authEmail.includes('@')) return;
-    saveUser({ email: authEmail, isPaid: false });
-    setShowAuth(false);
-  };
-
-  const handleUpgrade = (plan: string) => {
-    if (!user) { setShowUpgrade(false); setShowAuth(true); return; }
-    saveUser({ ...user, isPaid: true, plan });
-    setShowUpgrade(false);
-  };
-
   const startRecording = async () => {
+    if (!user) { setShowAuth(true); return; }
     if (!canAnalyze) { setShowUpgrade(true); return; }
     setCamError(null); setTranscript(''); setPauses([]);
     audioChunksRef.current = []; pausesRef.current = [];
@@ -288,7 +353,6 @@ export default function App() {
     formData.append('file', audioBlob, 'recording.webm');
     formData.append('model', 'whisper-1');
     formData.append('language', 'en');
-
     const res = await fetch('https://api.openai.com/v1/audio/transcriptions', {
       method: 'POST',
       headers: { 'Authorization': `Bearer ${OPENAI_KEY}` },
@@ -353,9 +417,14 @@ Respond ONLY with valid JSON. No text before or after, no markdown backticks:
 
       timers.forEach(clearTimeout);
       setAnalysisStep(4);
+
+      // Update analyses count in Supabase
       const newCount = analysesUsed + 1;
       setAnalysesUsed(newCount);
-      localStorage.setItem('sc_uses', newCount.toString());
+      if (user && profile) {
+        await supabase.from('profiles').update({ analyses_used: newCount }).eq('user_id', user.id);
+      }
+
       setTimeout(() => { setResults(parsed); setScreen('results'); }, 700);
 
     } catch (err: any) {
@@ -366,6 +435,7 @@ Respond ONLY with valid JSON. No text before or after, no markdown backticks:
   };
 
   const handleAnalyze = () => {
+    if (!user) { setShowAuth(true); return; }
     if (!transcript || transcript.trim().split(/\s+/).length < 15) {
       setApiError('Not enough speech detected. Please speak for at least 20–30 seconds.');
       return;
@@ -392,6 +462,52 @@ Respond ONLY with valid JSON. No text before or after, no markdown backticks:
     </div>
   );
 
+  const AuthModal = () => {
+    const inp = { width:'100%', background:G.surface, border:`1px solid ${G.border}`, borderRadius:10, padding:'12px 15px', color:G.text, fontSize:14, marginBottom:11 };
+    return (
+      <Modal title={authTab === 'signup' ? 'Create Account' : 'Welcome Back'} onClose={() => { setShowAuth(false); setAuthError(''); }}>
+        {/* Tabs */}
+        <div style={{ display:'flex', background:G.surface, border:`1px solid ${G.border}`, borderRadius:10, padding:3, marginBottom:22, gap:3 }}>
+          {(['signup','signin'] as const).map(tab => (
+            <button key={tab} className="btn" onClick={() => { setAuthTab(tab); setAuthError(''); }}
+              style={{ flex:1, background:authTab===tab?`linear-gradient(135deg,${G.accent},#8b5cf6)`:'none', color:authTab===tab?'#fff':G.muted, fontWeight:600, padding:'8px', borderRadius:7, fontSize:13, border:'none' }}>
+              {tab === 'signup' ? 'Sign Up' : 'Sign In'}
+            </button>
+          ))}
+        </div>
+
+        {authTab === 'signup' && (
+          <input value={authName} onChange={e => setAuthName(e.target.value)} type="text" placeholder="Your name"
+            style={inp}/>
+        )}
+        <input value={authEmail} onChange={e => setAuthEmail(e.target.value)} type="email" placeholder="your@email.com"
+          style={inp}/>
+        <input value={authPassword} onChange={e => setAuthPassword(e.target.value)}
+          onKeyDown={e => e.key === 'Enter' && (authTab === 'signup' ? handleSignUp() : handleSignIn())}
+          type="password" placeholder="Password (min. 6 characters)"
+          style={{ ...inp, marginBottom:authError ? 8 : 14 }}/>
+
+        {authError && (
+          <div style={{ fontSize:13, color:'#ef4444', marginBottom:12, padding:'9px 12px', background:'rgba(239,68,68,0.08)', borderRadius:9, border:'1px solid rgba(239,68,68,0.2)' }}>
+            {authError}
+          </div>
+        )}
+
+        <button className="btn" onClick={authTab === 'signup' ? handleSignUp : handleSignIn} disabled={authLoading}
+          style={{ width:'100%', background:`linear-gradient(135deg,${G.accent},#8b5cf6)`, color:'#fff', fontWeight:700, fontSize:15, padding:'13px', borderRadius:11, marginBottom:14, boxShadow:`0 6px 20px ${G.accentGlow}`, opacity:authLoading?0.7:1 }}>
+          {authLoading ? '⏳ Please wait…' : authTab === 'signup' ? 'Create Account →' : 'Sign In →'}
+        </button>
+
+        <p style={{ fontSize:12, color:G.muted, textAlign:'center' as any }}>
+          {authTab === 'signup' ? 'No spam. Cancel anytime.' : "Don't have an account? "}
+          {authTab === 'signin' && (
+            <button className="btn" onClick={() => setAuthTab('signup')} style={{ background:'none', color:G.accent, fontSize:12, textDecoration:'underline', border:'none', padding:0 }}>Sign up free</button>
+          )}
+        </p>
+      </Modal>
+    );
+  };
+
   const HomeScreen = () => (
     <div style={{ width:'100%', background:G.bg }}>
       <nav style={{ display:'flex', alignItems:'center', justifyContent:'space-between', padding:'18px 40px', borderBottom:`1px solid ${G.border}`, background:`${G.surface}dd`, backdropFilter:'blur(12px)', position:'sticky', top:0, zIndex:100 }}>
@@ -402,14 +518,14 @@ Respond ONLY with valid JSON. No text before or after, no markdown backticks:
         <div style={{ display:'flex', alignItems:'center', gap:10 }}>
           {user ? (
             <>
-              {user.isPaid && <span style={{ background:`linear-gradient(135deg,${G.gold},#d97706)`, color:'#000', fontSize:11, fontWeight:800, padding:'3px 10px', borderRadius:20 }}>PRO</span>}
-              <span style={{ color:G.muted, fontSize:13 }}>{user.email}</span>
-              <button className="btn" onClick={() => { setUser(null); localStorage.removeItem('sc_user'); }} style={{ color:G.muted, background:'none', fontSize:13, padding:'6px 12px', border:`1px solid ${G.border}`, borderRadius:8 }}>Logout</button>
+              {profile?.is_paid && <span style={{ background:`linear-gradient(135deg,${G.gold},#d97706)`, color:'#000', fontSize:11, fontWeight:800, padding:'3px 10px', borderRadius:20 }}>PRO</span>}
+              <span style={{ color:G.muted, fontSize:13 }}>{profile?.name || user.email}</span>
+              <button className="btn" onClick={handleSignOut} style={{ color:G.muted, background:'none', fontSize:13, padding:'6px 12px', border:`1px solid ${G.border}`, borderRadius:8 }}>Logout</button>
             </>
           ) : (
-            <button className="btn" onClick={() => setShowAuth(true)} style={{ color:G.text, background:G.card, fontSize:14, fontWeight:600, padding:'8px 18px', border:`1px solid ${G.border}`, borderRadius:10 }}>Sign In</button>
+            <button className="btn" onClick={() => { setAuthTab('signin'); setShowAuth(true); }} style={{ color:G.text, background:G.card, fontSize:14, fontWeight:600, padding:'8px 18px', border:`1px solid ${G.border}`, borderRadius:10 }}>Sign In</button>
           )}
-          <button className="btn" onClick={() => { if (!canAnalyze) setShowUpgrade(true); else setScreen('record'); }}
+          <button className="btn" onClick={() => { if (!user) { setAuthTab('signup'); setShowAuth(true); } else if (!canAnalyze) setShowUpgrade(true); else setScreen('record'); }}
             style={{ background:`linear-gradient(135deg,${G.accent},#8b5cf6)`, color:'#fff', fontSize:14, fontWeight:700, padding:'8px 20px', borderRadius:10 }}>
             Try Now →
           </button>
@@ -427,11 +543,11 @@ Respond ONLY with valid JSON. No text before or after, no markdown backticks:
           Record 60 seconds and instantly discover what to improve. AI analyzes your tone, pauses, filler words, and presence — with personalized, actionable feedback.
         </p>
         <div style={{ display:'flex', gap:12, justifyContent:'center', flexWrap:'wrap' }}>
-          <button className="btn" onClick={() => { if (!canAnalyze) setShowUpgrade(true); else setScreen('record'); }}
+          <button className="btn" onClick={() => { if (!user) { setAuthTab('signup'); setShowAuth(true); } else if (!canAnalyze) setShowUpgrade(true); else setScreen('record'); }}
             style={{ background:`linear-gradient(135deg,${G.accent},#8b5cf6)`, color:'#fff', fontSize:16, fontWeight:700, padding:'14px 30px', borderRadius:12, boxShadow:`0 8px 28px ${G.accentGlow}` }}>
             🎙️ Start for Free
           </button>
-          {!user && <button className="btn" onClick={() => setShowAuth(true)} style={{ background:G.card, color:G.text, fontSize:16, fontWeight:600, padding:'14px 30px', borderRadius:12, border:`1px solid ${G.border}` }}>Sign In</button>}
+          {!user && <button className="btn" onClick={() => { setAuthTab('signin'); setShowAuth(true); }} style={{ background:G.card, color:G.text, fontSize:16, fontWeight:600, padding:'14px 30px', borderRadius:12, border:`1px solid ${G.border}` }}>Sign In</button>}
         </div>
         {!user && <p style={{ color:G.muted, fontSize:13, marginTop:14 }}>No credit card · 3 free analyses</p>}
       </div>
@@ -464,7 +580,7 @@ Respond ONLY with valid JSON. No text before or after, no markdown backticks:
                 <li key={f} style={{ display:'flex', alignItems:'center', gap:8, fontSize:13 }}><span style={{ color:'#22c55e' }}>✓</span>{f}</li>
               ))}
             </ul>
-            <button className="btn" onClick={() => setScreen('record')} style={{ width:'100%', background:G.surface, border:`1px solid ${G.border}`, color:G.text, fontWeight:700, padding:'11px', borderRadius:10, fontSize:14 }}>Start Free</button>
+            <button className="btn" onClick={() => { if (!user) { setAuthTab('signup'); setShowAuth(true); } else setScreen('record'); }} style={{ width:'100%', background:G.surface, border:`1px solid ${G.border}`, color:G.text, fontWeight:700, padding:'11px', borderRadius:10, fontSize:14 }}>Start Free</button>
           </div>
           <div style={{ background:`linear-gradient(135deg,${G.accentSoft},rgba(139,92,246,0.07))`, border:`1px solid ${G.accent}55`, borderRadius:20, padding:'28px 24px', textAlign:'left', position:'relative' }}>
             <div style={{ position:'absolute', top:14, right:14, background:`linear-gradient(135deg,${G.accent},#8b5cf6)`, color:'#fff', fontSize:10, fontWeight:800, padding:'3px 10px', borderRadius:20 }}>RECOMMENDED</div>
@@ -533,7 +649,7 @@ Respond ONLY with valid JSON. No text before or after, no markdown backticks:
         <div style={{ padding:'16px 28px', display:'flex', alignItems:'center', justifyContent:'space-between', borderBottom:`1px solid ${G.border}` }}>
           <button className="btn" onClick={() => { stopRecording(); setScreen('home'); }} style={{ color:G.muted, background:'none', fontSize:14 }}>← Home</button>
           <span style={{ fontFamily:'"Playfair Display",serif', fontWeight:700, fontSize:16 }}>SpeakCoach<span style={{ color:G.accent }}>AI</span></span>
-          {!user?.isPaid && <div style={{ fontSize:13, color:G.muted, background:G.card, padding:'4px 12px', borderRadius:8, border:`1px solid ${G.border}` }}>{remaining} free left</div>}
+          {!profile?.is_paid && user && <div style={{ fontSize:13, color:G.muted, background:G.card, padding:'4px 12px', borderRadius:8, border:`1px solid ${G.border}` }}>{remaining} free left</div>}
         </div>
 
         <div style={{ flex:1, maxWidth:960, margin:'0 auto', width:'100%', padding:'28px 20px', display:'flex', flexDirection:'column', gap:20 }}>
@@ -698,6 +814,7 @@ Respond ONLY with valid JSON. No text before or after, no markdown backticks:
                     ))}
                     {apiError && <div style={{ fontSize:13, color:'#ef4444', marginBottom:12, padding:'9px 12px', background:'rgba(239,68,68,0.08)', borderRadius:9 }}>{apiError}</div>}
                     <button className="btn" onClick={() => {
+                      if (!user) { setShowAuth(true); return; }
                       if (!canAnalyze) { setShowUpgrade(true); return; }
                       if (!uTranscript || uTranscript.trim().split(/\s+/).length < 15) { setApiError('Please add a transcript first.'); return; }
                       runAnalysis(uTranscript, uploadDur, []);
@@ -746,7 +863,7 @@ Respond ONLY with valid JSON. No text before or after, no markdown backticks:
         <div style={{ padding:'16px 28px', display:'flex', alignItems:'center', justifyContent:'space-between', borderBottom:`1px solid ${G.border}`, background:`${G.surface}cc`, backdropFilter:'blur(12px)', position:'sticky', top:0, zIndex:50 }}>
           <button className="btn" onClick={reset} style={{ color:G.muted, background:'none', fontSize:14 }}>← Try Again</button>
           <span style={{ fontFamily:'"Playfair Display",serif', fontWeight:700 }}>Your Results</span>
-          {!user?.isPaid && <button className="btn" onClick={() => setShowUpgrade(true)} style={{ background:`linear-gradient(135deg,${G.accent},#8b5cf6)`, color:'#fff', fontWeight:700, fontSize:13, padding:'6px 14px', borderRadius:8 }}>Go Pro →</button>}
+          {!profile?.is_paid && <button className="btn" onClick={() => setShowUpgrade(true)} style={{ background:`linear-gradient(135deg,${G.accent},#8b5cf6)`, color:'#fff', fontWeight:700, fontSize:13, padding:'6px 14px', borderRadius:8 }}>Go Pro →</button>}
         </div>
 
         <div style={{ maxWidth:880, margin:'0 auto', padding:'36px 20px 72px', display:'flex', flexDirection:'column', gap:20 }} className="fadeUp">
@@ -758,7 +875,7 @@ Respond ONLY with valid JSON. No text before or after, no markdown backticks:
                 {results.overallScore>=8?'🏆 Outstanding!':results.overallScore>=6?'💪 Solid Foundation':results.overallScore>=4?'📈 Clear Potential':'🎯 Let\'s Get to Work'}
               </h2>
               <p style={{ color:G.muted, fontSize:14, lineHeight:1.7 }}>{results.summary}</p>
-              {!user?.isPaid && remaining <= 1 && (
+              {!profile?.is_paid && remaining <= 1 && (
                 <div style={{ marginTop:14, padding:'11px 14px', background:G.accentSoft, border:`1px solid ${G.accent}44`, borderRadius:11, fontSize:13, color:G.accent }}>
                   {remaining===0?'🔒 No free analyses left. ':'⚡ Last free analysis. '}
                   <button className="btn" onClick={() => setShowUpgrade(true)} style={{ background:'none', color:G.accent, fontWeight:700, textDecoration:'underline', fontSize:13 }}>Upgrade now →</button>
@@ -811,7 +928,7 @@ Respond ONLY with valid JSON. No text before or after, no markdown backticks:
 
           <div style={{ display:'flex', gap:12, justifyContent:'center', flexWrap:'wrap' as any }}>
             <button className="btn" onClick={reset} style={{ background:G.card, border:`1px solid ${G.border}`, color:G.text, fontWeight:700, padding:'11px 26px', borderRadius:11, fontSize:14 }}>🔄 Analyze Again</button>
-            {!user?.isPaid && <button className="btn" onClick={() => setShowUpgrade(true)} style={{ background:`linear-gradient(135deg,${G.accent},#8b5cf6)`, color:'#fff', fontWeight:700, padding:'11px 26px', borderRadius:11, fontSize:14, boxShadow:`0 5px 18px ${G.accentGlow}` }}>⚡ Unlimited Analyses →</button>}
+            {!profile?.is_paid && <button className="btn" onClick={() => setShowUpgrade(true)} style={{ background:`linear-gradient(135deg,${G.accent},#8b5cf6)`, color:'#fff', fontWeight:700, padding:'11px 26px', borderRadius:11, fontSize:14, boxShadow:`0 5px 18px ${G.accentGlow}` }}>⚡ Unlimited Analyses →</button>}
           </div>
         </div>
       </div>
@@ -827,18 +944,7 @@ Respond ONLY with valid JSON. No text before or after, no markdown backticks:
       {screen==='results' && <ResultsScreen/>}
       <Footer onPrivacy={() => window.open('/privacy.html', '_blank')} />
 
-      {showAuth && (
-        <Modal title="Create Account" onClose={() => setShowAuth(false)}>
-          <div style={{ fontSize:13, color:G.muted, marginBottom:20, lineHeight:1.65 }}>Save your progress and access your analyses anytime.</div>
-          <input value={authEmail} onChange={e => setAuthEmail(e.target.value)} onKeyDown={e => e.key==='Enter' && handleAuth()} type="email" placeholder="your@email.com"
-            style={{ width:'100%', background:G.surface, border:`1px solid ${G.border}`, borderRadius:10, padding:'12px 15px', color:G.text, fontSize:14, marginBottom:11 }}/>
-          <button className="btn" onClick={handleAuth}
-            style={{ width:'100%', background:`linear-gradient(135deg,${G.accent},#8b5cf6)`, color:'#fff', fontWeight:700, fontSize:15, padding:'13px', borderRadius:11, marginBottom:14, boxShadow:`0 6px 20px ${G.accentGlow}` }}>
-            Continue →
-          </button>
-          <p style={{ fontSize:12, color:G.muted, textAlign:'center' as any }}>No spam. Just your account settings.</p>
-        </Modal>
-      )}
+      {showAuth && <AuthModal />}
 
       {showUpgrade && (
         <Modal title="Unlock Pro" onClose={() => setShowUpgrade(false)}>
@@ -849,7 +955,7 @@ Respond ONLY with valid JSON. No text before or after, no markdown backticks:
             { plan:'weekly', label:'$9 / week', sub:'Auto-renews · cancel anytime' },
             { plan:'onetime', label:'$29 one-time', sub:'Lifetime access · no subscription', badge:'POPULAR' }
           ]).map(({ plan, label, sub, badge }: any) => (
-            <button key={plan} className="btn" onClick={() => handleUpgrade(plan)}
+            <button key={plan} className="btn" onClick={() => { if (!user) { setShowUpgrade(false); setShowAuth(true); } }}
               style={{ background:plan==='onetime'?G.accentSoft:G.surface, border:`1px solid ${plan==='onetime'?G.accent:G.border}`, borderRadius:13, padding:'14px 18px', textAlign:'left' as any, display:'flex', justifyContent:'space-between', alignItems:'center', width:'100%', marginBottom:10 }}>
               <div>
                 <div style={{ fontSize:15, fontWeight:700, color:G.text }}>{label}</div>
