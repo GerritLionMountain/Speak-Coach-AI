@@ -176,7 +176,7 @@ export default function App() {
     }
   };
 
-  const createProfile = async (userId: string, name: string, email: string) => {
+  const createProfile = async (userId: string, name: string) => {
     const { data } = await supabase.from('profiles').insert({
       user_id: userId,
       name,
