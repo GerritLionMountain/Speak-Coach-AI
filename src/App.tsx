@@ -93,6 +93,67 @@ const css = `
   textarea:focus, input:focus { border-color:#6366f1 !important; }
 `;
 
+type AuthModalProps = {
+  authTab: 'signin'|'signup';
+  setAuthTab: (t: 'signin'|'signup') => void;
+  authName: string; setAuthName: (v:string)=>void;
+  authEmail: string; setAuthEmail: (v:string)=>void;
+  authPassword: string; setAuthPassword: (v:string)=>void;
+  authError: string; authLoading: boolean;
+  onClose: ()=>void; onSignUp: ()=>void; onSignIn: ()=>void;
+};
+
+function AuthModal({ authTab, setAuthTab, authName, setAuthName, authEmail, setAuthEmail, authPassword, setAuthPassword, authError, authLoading, onClose, onSignUp, onSignIn }: AuthModalProps) {
+  const inp = { width:'100%', background:G.surface, border:`1px solid ${G.border}`, borderRadius:10, padding:'12px 15px', color:G.text, fontSize:14, marginBottom:11 };
+  return (
+    <div style={{ position:'fixed', inset:0, background:'rgba(0,0,0,0.82)', display:'flex', alignItems:'center', justifyContent:'center', zIndex:1000, padding:20, backdropFilter:'blur(10px)' }}
+      onClick={e => e.target === e.currentTarget && onClose()}>
+      <div style={{ background:G.card, border:`1px solid ${G.border}`, borderRadius:22, padding:32, width:'100%', maxWidth:480 }} className="scaleIn">
+        <div style={{ display:'flex', justifyContent:'space-between', alignItems:'center', marginBottom:24 }}>
+          <h3 style={{ fontSize:20, fontFamily:'"Playfair Display",serif', fontWeight:900 }}>{authTab === 'signup' ? 'Create Account' : 'Welcome Back'}</h3>
+          <button className="btn" onClick={onClose} style={{ background:G.surface, border:`1px solid ${G.border}`, color:G.muted, width:30, height:30, borderRadius:7, fontSize:14 }}>✕</button>
+        </div>
+
+        <div style={{ display:'flex', background:G.surface, border:`1px solid ${G.border}`, borderRadius:10, padding:3, marginBottom:22, gap:3 }}>
+          {(['signup','signin'] as const).map(tab => (
+            <button key={tab} className="btn" onClick={() => setAuthTab(tab)}
+              style={{ flex:1, background:authTab===tab?`linear-gradient(135deg,${G.accent},#8b5cf6)`:'none', color:authTab===tab?'#fff':G.muted, fontWeight:600, padding:'8px', borderRadius:7, fontSize:13, border:'none' }}>
+              {tab === 'signup' ? 'Sign Up' : 'Sign In'}
+            </button>
+          ))}
+        </div>
+
+        {authTab === 'signup' && (
+          <input value={authName} onChange={e => setAuthName(e.target.value)} type="text" placeholder="Your name" style={inp}/>
+        )}
+        <input value={authEmail} onChange={e => setAuthEmail(e.target.value)} type="email" placeholder="your@email.com" style={inp}/>
+        <input value={authPassword} onChange={e => setAuthPassword(e.target.value)}
+          onKeyDown={e => e.key === 'Enter' && (authTab === 'signup' ? onSignUp() : onSignIn())}
+          type="password" placeholder="Password (min. 6 characters)"
+          style={{ ...inp, marginBottom: authError ? 8 : 14 }}/>
+
+        {authError && (
+          <div style={{ fontSize:13, color:'#ef4444', marginBottom:12, padding:'9px 12px', background:'rgba(239,68,68,0.08)', borderRadius:9, border:'1px solid rgba(239,68,68,0.2)' }}>
+            {authError}
+          </div>
+        )}
+
+        <button className="btn" onClick={authTab === 'signup' ? onSignUp : onSignIn} disabled={authLoading}
+          style={{ width:'100%', background:`linear-gradient(135deg,${G.accent},#8b5cf6)`, color:'#fff', fontWeight:700, fontSize:15, padding:'13px', borderRadius:11, marginBottom:14, boxShadow:`0 6px 20px ${G.accentGlow}`, opacity:authLoading?0.7:1 }}>
+          {authLoading ? '⏳ Please wait…' : authTab === 'signup' ? 'Create Account →' : 'Sign In →'}
+        </button>
+
+        <p style={{ fontSize:12, color:G.muted, textAlign:'center' as any }}>
+          {authTab === 'signup' ? 'No spam. Cancel anytime.' : "Don't have an account? "}
+          {authTab === 'signin' && (
+            <button className="btn" onClick={() => setAuthTab('signup')} style={{ background:'none', color:G.accent, fontSize:12, textDecoration:'underline', border:'none', padding:0 }}>Sign up free</button>
+          )}
+        </p>
+      </div>
+    </div>
+  );
+}
+
 const Footer = ({ onPrivacy }: { onPrivacy: () => void }) => (
   <footer style={{ textAlign:'center', padding:'24px 20px', borderTop:`1px solid #1e2235`, marginTop:40 }}>
     <p style={{ fontSize:12, color:'#6b7280' }}>
@@ -176,7 +237,7 @@ export default function App() {
     }
   };
 
-  const createProfile = async (userId: string, name: string) => {
+  const createProfile = async (userId: string, name: string, email: string) => {
     const { data } = await supabase.from('profiles').insert({
       user_id: userId,
       name,
@@ -199,7 +260,7 @@ export default function App() {
     const { data, error } = await supabase.auth.signUp({ email: authEmail, password: authPassword });
     if (error) { setAuthError(error.message); setAuthLoading(false); return; }
     if (data.user) {
-      await createProfile(data.user.id, authName);
+      await createProfile(data.user.id, authName, authEmail);
       setShowAuth(false);
     }
     setAuthLoading(false);
@@ -462,51 +523,7 @@ Respond ONLY with valid JSON. No text before or after, no markdown backticks:
     </div>
   );
 
-  const AuthModal = () => {
-    const inp = { width:'100%', background:G.surface, border:`1px solid ${G.border}`, borderRadius:10, padding:'12px 15px', color:G.text, fontSize:14, marginBottom:11 };
-    return (
-      <Modal title={authTab === 'signup' ? 'Create Account' : 'Welcome Back'} onClose={() => { setShowAuth(false); setAuthError(''); }}>
-        {/* Tabs */}
-        <div style={{ display:'flex', background:G.surface, border:`1px solid ${G.border}`, borderRadius:10, padding:3, marginBottom:22, gap:3 }}>
-          {(['signup','signin'] as const).map(tab => (
-            <button key={tab} className="btn" onClick={() => { setAuthTab(tab); setAuthError(''); }}
-              style={{ flex:1, background:authTab===tab?`linear-gradient(135deg,${G.accent},#8b5cf6)`:'none', color:authTab===tab?'#fff':G.muted, fontWeight:600, padding:'8px', borderRadius:7, fontSize:13, border:'none' }}>
-              {tab === 'signup' ? 'Sign Up' : 'Sign In'}
-            </button>
-          ))}
-        </div>
-
-        {authTab === 'signup' && (
-          <input value={authName} onChange={e => setAuthName(e.target.value)} type="text" placeholder="Your name"
-            style={inp}/>
-        )}
-        <input value={authEmail} onChange={e => setAuthEmail(e.target.value)} type="email" placeholder="your@email.com"
-          style={inp}/>
-        <input value={authPassword} onChange={e => setAuthPassword(e.target.value)}
-          onKeyDown={e => e.key === 'Enter' && (authTab === 'signup' ? handleSignUp() : handleSignIn())}
-          type="password" placeholder="Password (min. 6 characters)"
-          style={{ ...inp, marginBottom:authError ? 8 : 14 }}/>
-
-        {authError && (
-          <div style={{ fontSize:13, color:'#ef4444', marginBottom:12, padding:'9px 12px', background:'rgba(239,68,68,0.08)', borderRadius:9, border:'1px solid rgba(239,68,68,0.2)' }}>
-            {authError}
-          </div>
-        )}
-
-        <button className="btn" onClick={authTab === 'signup' ? handleSignUp : handleSignIn} disabled={authLoading}
-          style={{ width:'100%', background:`linear-gradient(135deg,${G.accent},#8b5cf6)`, color:'#fff', fontWeight:700, fontSize:15, padding:'13px', borderRadius:11, marginBottom:14, boxShadow:`0 6px 20px ${G.accentGlow}`, opacity:authLoading?0.7:1 }}>
-          {authLoading ? '⏳ Please wait…' : authTab === 'signup' ? 'Create Account →' : 'Sign In →'}
-        </button>
-
-        <p style={{ fontSize:12, color:G.muted, textAlign:'center' as any }}>
-          {authTab === 'signup' ? 'No spam. Cancel anytime.' : "Don't have an account? "}
-          {authTab === 'signin' && (
-            <button className="btn" onClick={() => setAuthTab('signup')} style={{ background:'none', color:G.accent, fontSize:12, textDecoration:'underline', border:'none', padding:0 }}>Sign up free</button>
-          )}
-        </p>
-      </Modal>
-    );
-  };
+  // AuthModal rendered below via props
 
   const HomeScreen = () => (
     <div style={{ width:'100%', background:G.bg }}>
@@ -944,7 +961,15 @@ Respond ONLY with valid JSON. No text before or after, no markdown backticks:
       {screen==='results' && <ResultsScreen/>}
       <Footer onPrivacy={() => window.open('/privacy.html', '_blank')} />
 
-      {showAuth && <AuthModal />}
+      {showAuth && <AuthModal
+        authTab={authTab} setAuthTab={(t) => { setAuthTab(t); setAuthError(''); }}
+        authName={authName} setAuthName={setAuthName}
+        authEmail={authEmail} setAuthEmail={setAuthEmail}
+        authPassword={authPassword} setAuthPassword={setAuthPassword}
+        authError={authError} authLoading={authLoading}
+        onClose={() => { setShowAuth(false); setAuthError(''); }}
+        onSignUp={handleSignUp} onSignIn={handleSignIn}
+      />}
 
       {showUpgrade && (
         <Modal title="Unlock Pro" onClose={() => setShowUpgrade(false)}>
