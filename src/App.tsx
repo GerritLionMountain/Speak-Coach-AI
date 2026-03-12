@@ -301,16 +301,14 @@ export default function App() {
     return () => { active = false; };
   }, [screen, mode]);
 
-  // Re-attach stream after re-render
+  // Re-attach stream only when videoRef becomes available
   useEffect(() => {
-    if (streamRef.current && videoRef.current) {
-      if (videoRef.current.srcObject !== streamRef.current) {
-        videoRef.current.srcObject = streamRef.current;
-        videoRef.current.muted = true;
-        videoRef.current.play().catch(() => {});
-      }
+    if (streamRef.current && videoRef.current && !videoRef.current.srcObject) {
+      videoRef.current.srcObject = streamRef.current;
+      videoRef.current.muted = true;
+      videoRef.current.play().catch(() => {});
     }
-  });
+  }, [screen, recording]);
 
   const canAnalyze = profile?.is_paid || analysesUsed < FREE_LIMIT;
   const remaining = Math.max(0, FREE_LIMIT - analysesUsed);
