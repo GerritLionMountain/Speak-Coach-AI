@@ -260,7 +260,7 @@ export default function App() {
     const { data, error } = await supabase.auth.signUp({ email: authEmail, password: authPassword });
     if (error) { setAuthError(error.message); setAuthLoading(false); return; }
     if (data.user) {
-      await createProfile(data.user.id, authName, authEmail);
+      await createProfile(data.user.id, authName);
       setShowAuth(false);
     }
     setAuthLoading(false);
