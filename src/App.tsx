@@ -97,6 +97,10 @@ const Footer = ({ onPrivacy }: { onPrivacy: () => void }) => (
       <button onClick={onPrivacy} style={{ background:'none', border:'none', color:'#6366f1', cursor:'pointer', fontSize:12, textDecoration:'underline', padding:0 }}>
         Privacy Policy
       </button>
+      {' · '}
+      <button onClick={() => window.open('/tos.html', '_blank')} style={{ background:'none', border:'none', color:'#6366f1', cursor:'pointer', fontSize:12, textDecoration:'underline', padding:0 }}>
+        Terms of Service
+      </button>
     </p>
   </footer>
 );
