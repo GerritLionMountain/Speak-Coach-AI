@@ -297,18 +297,17 @@ export default function App() {
       } catch (e: any) {
         setCamError(e.message || 'Camera not accessible');
       }
-    })();
-    return () => { active = false; };
+    })();    return () => { active = false; };
   }, [screen, mode]);
 
-  // Re-attach stream only when srcObject is missing (not on every re-render)
-  useEffect(() => {
-    if (streamRef.current && videoRef.current && !videoRef.current.srcObject) {
-      videoRef.current.srcObject = streamRef.current;
-      videoRef.current.muted = true;
-      videoRef.current.play().catch(() => {});
+  const videoRefCallback = useCallback((el: HTMLVideoElement | null) => {
+    videoRef.current = el;
+    if (el && streamRef.current) {
+      el.srcObject = streamRef.current;
+      el.muted = true;
+      el.play().catch(() => {});
     }
-  }, [screen, recording, transcribing, transcript]);
+  }, []);
 
   const canAnalyze = profile?.is_paid || analysesUsed < FREE_LIMIT;
   const remaining = Math.max(0, FREE_LIMIT - analysesUsed);
@@ -677,7 +676,7 @@ Respond ONLY with valid JSON. No text before or after, no markdown backticks:
           {mode === 'record' ? (
             <div style={{ display:'grid', gridTemplateColumns:'1fr 340px', gap:18, alignItems:'start' }}>
               <div style={{ background:G.card, border:`1px solid ${G.border}`, borderRadius:18, overflow:'hidden', position:'relative', aspectRatio:'16/10' as any }}>
-                <video ref={videoRef} autoPlay playsInline muted style={{ width:'100%', height:'100%', objectFit:'cover', display:'block', transform:'scaleX(-1)' }}/>
+                <video ref={videoRefCallback} autoPlay playsInline muted style={{ width:'100%', height:'100%', objectFit:'cover', display:'block', transform:'scaleX(-1)' }}/>
                 {!recording && !camError && !transcribing && !streamRef.current && (
                   <div style={{ position:'absolute', inset:0, display:'flex', alignItems:'center', justifyContent:'center', background:'rgba(7,8,15,0.88)', flexDirection:'column', gap:10 }}>
                     <div style={{ fontSize:42 }}>🎥</div>
