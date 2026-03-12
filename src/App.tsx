@@ -301,14 +301,14 @@ export default function App() {
     return () => { active = false; };
   }, [screen, mode]);
 
-  // Re-attach stream only when videoRef becomes available
+  // Re-attach stream only when srcObject is missing (not on every re-render)
   useEffect(() => {
     if (streamRef.current && videoRef.current && !videoRef.current.srcObject) {
       videoRef.current.srcObject = streamRef.current;
       videoRef.current.muted = true;
       videoRef.current.play().catch(() => {});
     }
-  }, [screen, recording]);
+  }, [screen, recording, transcribing, transcript]);
 
   const canAnalyze = profile?.is_paid || analysesUsed < FREE_LIMIT;
   const remaining = Math.max(0, FREE_LIMIT - analysesUsed);
