@@ -954,7 +954,7 @@ Respond ONLY with valid JSON. No text before or after, no markdown backticks:
     <>
       <style>{css}</style>
       {screen==='home' && <HomeScreen/>}
-      {screen==='record' && <RecordScreen/>}
+      <div style={{ display: screen==='record' ? 'block' : 'none' }}><RecordScreen/></div>
       {screen==='analyzing' && <AnalyzingScreen/>}
       {screen==='results' && <ResultsScreen/>}
       <Footer onPrivacy={() => window.open('/privacy.html', '_blank')} />
